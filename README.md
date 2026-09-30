@@ -329,3 +329,24 @@ clawtributors:hidden:end -->
 ## License
 
 [MIT](LICENSE) © OpenClaw Foundation. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for incorporated or adapted code.
+
+
+## 🚀 1-Click Automated Deployment (PebbleHost / SkailarHost / Pterodactyl)
+
+You can automatically deploy and manage OpenClaw on any Pterodactyl-based bot hosting panel (PebbleHost, SkailarHost, SparkedHost, etc.) using the built-in deployer:
+
+```bash
+# Deploy to SkailarHost
+node deploy/deploy.js --panel https://panel.skailarhost.com --key ptlc_YOUR_API_KEY --server YOUR_SERVER_ID --restart
+
+# Deploy to PebbleHost
+node deploy/deploy.js --panel https://panel.pebblehost.com --key ptlc_YOUR_API_KEY --server YOUR_SERVER_ID --restart
+```
+
+### What the deployer does automatically:
+1. Connects to the host API and inspects primary IP and assigned port.
+2. Injects the standalone low-RAM runner (`pebble_start.js` / `index.js`).
+3. Sideloads Node.js 24 LTS and Lightpanda CDP headless browser.
+4. Generates clean OpenClaw config with relaxed CORS/origin validation and local token authentication.
+5. Runs an automated pairing daemon that auto-approves incoming browser connections every 2 seconds.
+6. Restarts the container and prints the direct Control UI URL with pre-filled auth token.
