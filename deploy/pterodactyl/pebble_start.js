@@ -5,6 +5,7 @@
  * - Sideloads Lightpanda CDP browser
  * - Disables auth or uses clean token, binds 0.0.0.0 (lan)
  * - Sets mode=local and wildcard origin allowlist
+ * - Validated against strict OpenClaw 2026.9.7 schema
  */
 
 const fs = require("fs");
@@ -61,7 +62,7 @@ async function main() {
   fs.mkdirSync(path.join(ROOT, ".bin"), { recursive: true });
   fs.mkdirSync(path.join(ROOT, ".node24"), { recursive: true });
 
-  // 1. Write deterministic openclaw.json with mode="local" and wildcard allowedOrigins
+  // 1. Write strictly valid openclaw.json
   const config = {
     gateway: {
       mode: "local",
@@ -86,7 +87,7 @@ async function main() {
       }
     },
     browser: {
-      provider: "cdp",
+      enabled: true,
       cdpUrl: "http://127.0.0.1:9222"
     }
   };
@@ -96,7 +97,7 @@ async function main() {
   const homeConfigDir = path.join(homeDir, ".openclaw");
   fs.mkdirSync(homeConfigDir, { recursive: true });
   fs.writeFileSync(path.join(homeConfigDir, "openclaw.json"), JSON.stringify(config, null, 2));
-  console.log("[1/4] Config written (mode=local + origin allowlists).");
+  console.log("[1/4] Config written (mode=local, browser.enabled=true, strict schema).");
 
   // 2. Sideload Node 24.21.0 LTS if needed
   const node24Bin = path.join(ROOT, ".node24", "bin", "node");
