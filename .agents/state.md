@@ -1,6 +1,6 @@
 # State
 
-Status: lean repo thinned (616MB -> 140MB) + lean deploy kit ready
+Status: OpenClaw Lean repository thinned (140MB) and published to GitHub
 
 ## Goal
 
@@ -9,19 +9,21 @@ with 100% protocol and feature compatibility with vanilla OpenClaw.
 
 ## Today's progress
 
-- Mapped full npm package bloat via unpkg metadata (297MB mapped: worker 101MB, control-ui 51MB, .d.ts 17MB, docs 15MB).
-- Deep repo code-size thinning for fast GitHub push on slow connections:
-  - Tracked tree reduced from **616MB (50,646 files) -> 140MB (19,273 files)**.
-  - Dropped all test/spec suites (src, ui, packages, extensions, scripts).
-  - Dropped native client apps (/apps/android, /apps/ios, /apps/macos).
-  - Dropped /docs, /crates, /qa, /CHANGELOG archive, .github CI workflows.
-  - Dropped non-English translation memory packs.
-  - Kept 100% of Gateway server runtime code, Control UI source, packages, and core channel extensions (Telegram, Discord, Slack).
-- Built `lean/thin.mjs` on-host thinner tool for small-disk VPS/hosts.
-- Upgraded `lean/deploy/index.js` with cgroup-aware auto heap sizing (65% of container RAM limit), `UV_THREADPOOL_SIZE=2`, `NODE_COMPILE_CACHE`, and 60s RSS sampler.
+- **GitHub Authentication:** Authenticated GitHub CLI (`gh`) and Git with PAT for account `therealfreddied`.
+- **Deep Repo Code-Size Thinning:** Reduced tracked git tree from **616 MB (50,646 files) → 140 MB (25,058 files)**:
+  - Untracked all unit/e2e test suites (`src`, `ui`, `packages`, `extensions`, `scripts`).
+  - Untracked native mobile/desktop apps (`/apps/android`, `/apps/ios`, `/apps/macos`).
+  - Untracked `/docs`, `/crates`, `/qa`, `/CHANGELOG/`, `.github/` workflows.
+  - Untracked non-English UI translation memory files (`en` kept).
+  - Preserved 100% of Gateway runtime code, Control UI source, packages, and Telegram/Discord/Slack channels.
+- **GitHub Publication:** Created public repo and pushed clean release commit to `https://github.com/therealfreddied/openclaw-lean`.
+- **Lean Deploy Kit:** `lean/deploy/index.js` upgraded with cgroup memory limit auto-detection (65% heap cap), `UV_THREADPOOL_SIZE=2`, `NODE_COMPILE_CACHE`, and 60s RSS sampler; built `lean/thin.mjs` on-host disk pruner.
+
+## Blockers
+
+None.
 
 ## Next actions
 
-1. Push thinned repo to user's GitHub repo.
-2. For SkailarHost/Wispbyte: upload `lean/deploy/` files, run `npm install`, and start.
-3. Monitor RSS in `gateway.log` to confirm idle footprint under 320MB.
+1. Deploy `https://github.com/therealfreddied/openclaw-lean` on SkailarHost, WispByte, or any 512MB VPS.
+2. Monitor RSS in `gateway.log` over SFTP to verify memory footprint under 320 MB.
