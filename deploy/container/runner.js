@@ -213,6 +213,31 @@ async function main() {
     String(PORT)
   ];
 
+  
+  // 6. Auto-approve device pairing requests in background
+  setInterval(async () => {
+    try {
+      if (!openclawCli) return;
+      const listProc = spawnSync(nodeExec, [openclawCli, "devices", "list", "--json"], {
+        env: gatewayEnv,
+        encoding: "utf8"
+      });
+      if (listProc.stdout) {
+        try {
+          const data = JSON.parse(listProc.stdout);
+          const pending = data.pending || [];
+          for (const req of pending) {
+            console.log(`[Auto-Approve] Approving pending device ${req.requestId} (${req.client?.label || "browser"})...`);
+            spawnSync(nodeExec, [openclawCli, "devices", "approve", req.requestId], {
+              env: gatewayEnv,
+              stdio: "inherit"
+            });
+          }
+        } catch (e) {}
+      }
+    } catch (err) {}
+  }, 3000);
+
   const gatewayProcess = spawn(nodeExec, gatewayArgs, {
     env: gatewayEnv,
     stdio: "inherit"
