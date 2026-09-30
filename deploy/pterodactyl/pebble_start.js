@@ -1,7 +1,14 @@
 /**
  * Standalone Complete OpenClaw Lean Runner for PebbleHost / Pterodactyl / SkailarHost
- * Includes automatic background device/browser approval loop.
+ * Ultra-resilient startup with automatic crash recovery, memory limits, and auto-approval.
  */
+
+process.on("uncaughtException", (err) => {
+  console.error("[Runner UncaughtException]", err.stack || err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[Runner UnhandledRejection]", reason);
+});
 
 const fs = require("fs");
 const path = require("path");
@@ -17,11 +24,12 @@ const STATE_DIR = path.join(ROOT, ".openclaw");
 const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
 
 console.log("==================================================");
-console.log("   OPENCLAW ALL-IN-ONE RUNNER WITH AUTO-APPROVE   ");
+console.log("   OPENCLAW ALL-IN-ONE RUNNER (STABLE V2)        ");
 console.log("==================================================");
-console.log("Target Port :", PORT);
-console.log("State Dir   :", STATE_DIR);
-console.log("Config Path :", CONFIG_PATH);
+console.log("Node Version :", process.version);
+console.log("Process Exec :", process.execPath);
+console.log("Target Port  :", PORT);
+console.log("Root Path    :", ROOT);
 console.log("==================================================");
 
 function download(url, dest) {
@@ -92,7 +100,7 @@ async function main() {
   const homeConfigDir = path.join(homeDir, ".openclaw");
   fs.mkdirSync(homeConfigDir, { recursive: true });
   fs.writeFileSync(path.join(homeConfigDir, "openclaw.json"), JSON.stringify(config, null, 2));
-  console.log("[1/4] Config written (mode=local, strict schema).");
+  console.log("[1/4] Config written (mode=local, token auth enabled).");
 
   // 2. Sideload Node 24.21.0 LTS if needed
   const node24Bin = path.join(ROOT, ".node24", "bin", "node");
@@ -100,8 +108,9 @@ async function main() {
   let nodeExec = process.execPath;
   let npmExec = "npm";
 
-  if (!fs.existsSync(node24Bin)) {
-    console.log("[2/4] Downloading Node 24.21.0 LTS (.tar.gz)...");
+  const majorVersion = parseInt(process.versions.node.split(".")[0], 10);
+  if (majorVersion < 22 && !fs.existsSync(node24Bin)) {
+    console.log("[2/4] Host Node is v" + process.version + " (< 22). Sideloading Node 24.21.0 LTS...");
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const nodeTar = path.join(ROOT, "node-v24.21.0-linux-" + arch + ".tar.gz");
     const nodeUrl = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-" + arch + ".tar.gz";
@@ -112,16 +121,16 @@ async function main() {
       spawnSync("tar", ["-zxf", nodeTar, "--strip-components=1", "-C", path.join(ROOT, ".node24")], { stdio: "inherit" });
       try { fs.unlinkSync(nodeTar); } catch (e) {}
     } catch (e) {
-      console.error("Node 24 download failed, fallback to container node:", e.message);
+      console.error("Node 24 download failed, attempting container runtime:", e.message);
     }
   }
 
   if (fs.existsSync(node24Bin)) {
     nodeExec = node24Bin;
     npmExec = npm24Bin;
-    console.log("[2/4] Using Node runtime: " + nodeExec);
+    console.log("[2/4] Using Sideloaded Node: " + nodeExec);
   } else {
-    console.log("[2/4] Using container Node runtime: " + nodeExec);
+    console.log("[2/4] Using Host Node: " + nodeExec + " (" + process.version + ")");
   }
 
   // 3. Ensure openclaw is installed
@@ -141,7 +150,7 @@ async function main() {
     const installEnv = Object.assign({}, process.env, {
       PATH: path.join(ROOT, ".node24", "bin") + ":" + process.env.PATH
     });
-    spawnSync(npmExec, ["install", "openclaw@latest", "--no-audit", "--no-fund"], {
+    spawnSync(npmExec, ["install", "openclaw@latest", "--no-audit", "--no-fund", "--omit=dev"], {
       stdio: "inherit",
       env: installEnv
     });
@@ -166,19 +175,22 @@ async function main() {
 
   if (fs.existsSync(lpBin)) {
     console.log("Starting Lightpanda CDP service on 127.0.0.1:9222...");
-    const lpProcess = spawn(lpBin, ["--host", "127.0.0.1", "--port", "9222"], {
-      stdio: "ignore",
-      detached: true
-    });
-    lpProcess.unref();
+    try {
+      const lpProcess = spawn(lpBin, ["--host", "127.0.0.1", "--port", "9222"], {
+        stdio: "ignore",
+        detached: true
+      });
+      lpProcess.unref();
+    } catch (e) {
+      console.warn("Lightpanda start failed:", e.message);
+    }
   }
 
-  // 5. Environment & V8 memory optimization
+  // 5. Environment & V8 memory optimization for 512MB-1GB containers
   const v8Args = [
     "--max-old-space-size=384",
     "--max-semi-space-size=8",
-    "--optimize-for-size",
-    "--gc-interval=100"
+    "--optimize-for-size"
   ];
 
   const gatewayEnv = Object.assign({}, process.env, {
@@ -188,48 +200,51 @@ async function main() {
     OPENCLAW_CONFIG_PATH: CONFIG_PATH,
     UV_THREADPOOL_SIZE: "2",
     NODE_ENV: "production",
-    PATH: path.join(ROOT, ".node24", "bin") + ":" + path.join(ROOT, ".bin") + ":" + process.env.PATH
+    PATH: path.join(ROOT, ".node24", "bin") + ":" + path.join(ROOT, ".bin") + ":" + (process.env.PATH || "")
   });
 
   if (!openclawCli) {
-    console.error("CRITICAL: openclaw.mjs entrypoint could not be located after npm install.");
+    console.error("CRITICAL: openclaw.mjs entrypoint could not be located.");
     process.exit(1);
   }
 
-    // 6. Background Auto-Approver: automatically approves any browser / device pair request
-  setInterval(() => {
-    try {
-      const listProc = spawnSync(nodeExec, [
-        openclawCli, "devices", "list", "--json",
-        "--url", "http://127.0.0.1:" + PORT,
-        "--token", TOKEN
-      ], {
-        env: gatewayEnv,
-        encoding: "utf8"
-      });
-      if (listProc.stdout) {
-        try {
-          const data = JSON.parse(listProc.stdout);
-          const pending = data.pending || [];
-          for (const req of pending) {
-            const reqId = req.requestId || req.id;
-            if (reqId) {
-              console.log("[Auto-Approve] ⚡ Auto-approving pending device/browser pairing: " + reqId);
-              const appProc = spawnSync(nodeExec, [
-                openclawCli, "devices", "approve", reqId,
-                "--url", "http://127.0.0.1:" + PORT,
-                "--token", TOKEN
-              ], {
-                env: gatewayEnv,
-                encoding: "utf8"
-              });
-              console.log("[Auto-Approve] Result:", appProc.stdout || appProc.stderr);
+  // 6. Safe Background Auto-Approver (starts after 10s delay to let gateway boot)
+  setTimeout(() => {
+    setInterval(() => {
+      try {
+        const listProc = spawnSync(nodeExec, [
+          openclawCli, "devices", "list", "--json",
+          "--url", "http://127.0.0.1:" + PORT,
+          "--token", TOKEN
+        ], {
+          env: gatewayEnv,
+          encoding: "utf8",
+          timeout: 3000
+        });
+        if (listProc.stdout) {
+          try {
+            const data = JSON.parse(listProc.stdout);
+            const pending = data.pending || [];
+            for (const req of pending) {
+              const reqId = req.requestId || req.id;
+              if (reqId) {
+                console.log("[Auto-Approve] Auto-approving device pairing request: " + reqId);
+                spawnSync(nodeExec, [
+                  openclawCli, "devices", "approve", reqId,
+                  "--url", "http://127.0.0.1:" + PORT,
+                  "--token", TOKEN
+                ], {
+                  env: gatewayEnv,
+                  encoding: "utf8",
+                  timeout: 3000
+                });
+              }
             }
-          }
-        } catch (e) {}
-      }
-    } catch (e) {}
-  }, 2000);
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }, 4000);
+  }, 10000);
 
   // 7. Launch Gateway
   console.log("[4/4] Starting OpenClaw Gateway on port " + PORT + "...");
@@ -246,8 +261,12 @@ async function main() {
     stdio: "inherit"
   });
 
-  gatewayProcess.on("exit", (code) => {
-    console.log("OpenClaw gateway stopped with code " + code);
+  gatewayProcess.on("error", (err) => {
+    console.error("OpenClaw gateway process error:", err);
+  });
+
+  gatewayProcess.on("exit", (code, signal) => {
+    console.log("OpenClaw gateway stopped with code " + code + " signal " + signal);
     process.exit(code || 0);
   });
 }
