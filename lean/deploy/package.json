@@ -1,0 +1,12 @@
+{
+  "name": "openclaw-host",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "node": "24.21.0",
+    "openclaw": "2026.9.6"
+  }
+}
