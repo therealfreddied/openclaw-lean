@@ -1,6 +1,6 @@
 /**
  * Standalone Complete OpenClaw Lean Runner for PebbleHost / Pterodactyl
- * Self-contained: No curl or xz system dependencies required.
+ * Self-contained: Pure Node.js streams (no external curl/xz dependencies)
  */
 
 const fs = require("fs");
@@ -11,7 +11,8 @@ const { spawnSync, spawn } = require("child_process");
 
 const ROOT = process.cwd();
 const PORT = process.env.SERVER_PORT || process.env.PORT || "25613";
-const TOKEN = *** || "pebble-7b46e5621dcf5f5e1289cd3a5cf7c444";
+const DEFAULT_TOKEN = "pebble-7b46e5621dcf5f5e1289cd3a5cf7c444";
+const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ? process.env.OPENCLAW_GATEWAY_TOKEN : DEFAULT_TOKEN;
 const STATE_DIR = path.join(ROOT, ".openclaw");
 const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
 
@@ -52,19 +53,18 @@ function download(url, dest) {
 }
 
 async function main() {
-  // 1. Create directory structure
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(path.join(ROOT, ".bin"), { recursive: true });
   fs.mkdirSync(path.join(ROOT, ".node24"), { recursive: true });
 
-  // 2. Write deterministic openclaw.json with origin allowlists and host header fallback
+  // 1. Write deterministic openclaw.json
   const config = {
     gateway: {
       bind: "lan",
       port: Number(PORT),
       auth: {
         mode: "token",
-        token: ***
+        token: TOKEN
       },
       controlUi: {
         enabled: true,
@@ -91,7 +91,7 @@ async function main() {
   fs.writeFileSync(path.join(homeConfigDir, "openclaw.json"), JSON.stringify(config, null, 2));
   console.log("[1/4] Config written with wildcard origin support.");
 
-  // 3. Sideload Node 24.21.0 LTS if needed
+  // 2. Sideload Node 24.21.0 LTS
   const node24Bin = path.join(ROOT, ".node24", "bin", "node");
   const npm24Bin = path.join(ROOT, ".node24", "bin", "npm");
   let nodeExec = process.execPath;
@@ -102,14 +102,14 @@ async function main() {
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const nodeTar = path.join(ROOT, `node-v24.21.0-linux-${arch}.tar.gz`);
     const nodeUrl = `https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-${arch}.tar.gz`;
-    
+
     try {
       await download(nodeUrl, nodeTar);
       console.log("Extracting Node 24...");
       spawnSync("tar", ["-zxf", nodeTar, "--strip-components=1", "-C", path.join(ROOT, ".node24")], { stdio: "inherit" });
       try { fs.unlinkSync(nodeTar); } catch (e) {}
     } catch (e) {
-      console.error("Node 24 download failed, will fallback to container node:", e.message);
+      console.error("Node 24 download failed, fallback to container node:", e.message);
     }
   }
 
@@ -121,7 +121,7 @@ async function main() {
     console.log(`[2/4] Using container Node runtime: ${nodeExec}`);
   }
 
-  // 4. Ensure openclaw is installed
+  // 3. Ensure openclaw is installed
   const openclawCliCandidates = [
     path.join(ROOT, "node_modules", "openclaw", "openclaw.mjs"),
     path.join(ROOT, ".node24", "lib", "node_modules", "openclaw", "openclaw.mjs"),
@@ -148,7 +148,7 @@ async function main() {
 
   console.log(`[3/4] OpenClaw entrypoint: ${openclawCli}`);
 
-  // 5. Sideload Lightpanda CDP Browser
+  // 4. Sideload Lightpanda CDP Browser
   const lpBin = path.join(ROOT, ".bin", "lightpanda");
   if (!fs.existsSync(lpBin)) {
     console.log("Downloading Lightpanda headless browser (~35MB RAM footprint)...");
@@ -171,7 +171,7 @@ async function main() {
     lpProcess.unref();
   }
 
-  // 6. Launch Gateway
+  // 5. Launch Gateway
   console.log(`[4/4] 🚀 Starting OpenClaw Gateway on port ${PORT}...`);
   const v8Args = [
     "--max-old-space-size=384",
