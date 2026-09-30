@@ -1,6 +1,7 @@
 /**
- * Standalone Complete OpenClaw Lean Runner for PebbleHost / Pterodactyl / SkailarHost
- * Ultra-resilient startup with automatic crash recovery, memory limits, and auto-approval.
+ * Standalone Ultra-Lean OpenClaw Runner for Constrained/Container Hosts
+ * Strips out heavy background polling, disables unused heavyweight plugins,
+ * and tunes V8 GC & thread pools for butter-smooth responsiveness on 512MB-1GB RAM.
  */
 
 process.on("uncaughtException", (err) => {
@@ -24,10 +25,9 @@ const STATE_DIR = path.join(ROOT, ".openclaw");
 const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
 
 console.log("==================================================");
-console.log("   OPENCLAW ALL-IN-ONE RUNNER (STABLE V2)        ");
+console.log("   OPENCLAW ULTRA-LEAN RUNNER (TURBO v4)         ");
 console.log("==================================================");
-console.log("Node Version :", process.version);
-console.log("Process Exec :", process.execPath);
+console.log("Host Node    :", process.version);
 console.log("Target Port  :", PORT);
 console.log("Root Path    :", ROOT);
 console.log("==================================================");
@@ -65,7 +65,7 @@ async function main() {
   fs.mkdirSync(path.join(ROOT, ".bin"), { recursive: true });
   fs.mkdirSync(path.join(ROOT, ".node24"), { recursive: true });
 
-  // 1. Write strictly valid openclaw.json
+  // 1. Write stripped-down, ultra-performant openclaw.json
   const config = {
     gateway: {
       mode: "local",
@@ -89,6 +89,26 @@ async function main() {
         dangerouslyAllowHostHeaderOriginFallback: true
       }
     },
+    // Deny heavy unneeded plugins that eat RAM & spawn heavy child watchers
+    plugins: {
+      deny: [
+        "cua-computer",
+        "linux-node",
+        "talk-voice",
+        "azure-speech",
+        "apple-fm",
+        "ollama",
+        "geolocation",
+        "beam"
+      ]
+    },
+    // Disable noisy telemetry & background diagnostic bloat
+    telemetry: {
+      enabled: false
+    },
+    diagnostics: {
+      enabled: false
+    },
     browser: {
       enabled: true,
       cdpUrl: "http://127.0.0.1:9222"
@@ -100,41 +120,42 @@ async function main() {
   const homeConfigDir = path.join(homeDir, ".openclaw");
   fs.mkdirSync(homeConfigDir, { recursive: true });
   fs.writeFileSync(path.join(homeConfigDir, "openclaw.json"), JSON.stringify(config, null, 2));
-  console.log("[1/4] Config written (mode=local, token auth enabled).");
+  console.log("[1/4] Lean configuration applied (heavy background plugins disabled).");
 
-  // 2. Sideload Node 24.21.0 LTS if needed
+  // 2. Node Version Check & Sideload
   const node24Bin = path.join(ROOT, ".node24", "bin", "node");
   const npm24Bin = path.join(ROOT, ".node24", "bin", "npm");
-  let nodeExec = process.execPath;
-  let npmExec = "npm";
 
-  const majorVersion = parseInt(process.versions.node.split(".")[0], 10);
-  const isNodeSufficient = (v) => { try { const p = v.replace(/^v/, "").split(".").map(Number); return p[0] > 24 || (p[0] === 24 && p[1] >= 16); } catch (e) { return false; } };
+  const isNodeSufficient = (v) => {
+    try {
+      const p = v.replace(/^v/, "").split(".").map(Number);
+      return p[0] > 24 || (p[0] === 24 && p[1] >= 16);
+    } catch (e) {
+      return false;
+    }
+  };
+
   if (!isNodeSufficient(process.version) && !fs.existsSync(node24Bin)) {
-    console.log("[2/4] Host Node is v" + process.version + " (< 24.16.0). Sideloading Node 24.21.0 LTS...");
+    console.log("[2/4] Sideloading Node 24.21.0 LTS Linux x64...");
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const nodeTar = path.join(ROOT, "node-v24.21.0-linux-" + arch + ".tar.gz");
     const nodeUrl = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-" + arch + ".tar.gz";
 
     try {
       await download(nodeUrl, nodeTar);
-      console.log("Extracting Node 24...");
+      console.log("Extracting Node 24.21.0 LTS...");
       spawnSync("tar", ["-zxf", nodeTar, "--strip-components=1", "-C", path.join(ROOT, ".node24")], { stdio: "inherit" });
       try { fs.unlinkSync(nodeTar); } catch (e) {}
     } catch (e) {
-      console.error("Node 24 download failed, attempting container runtime:", e.message);
+      console.error("Node 24 download/extract failed:", e.message);
     }
   }
 
-  if (fs.existsSync(node24Bin)) {
-    nodeExec = node24Bin;
-    npmExec = npm24Bin;
-    console.log("[2/4] Using Sideloaded Node: " + nodeExec);
-  } else {
-    console.log("[2/4] Using Host Node: " + nodeExec + " (" + process.version + ")");
-  }
+  const nodeExec = fs.existsSync(node24Bin) ? node24Bin : process.execPath;
+  const npmExec = fs.existsSync(npm24Bin) ? npm24Bin : "npm";
+  console.log("[2/4] Runtime Executable: " + nodeExec);
 
-  // 3. Ensure openclaw is installed
+  // 3. Check OpenClaw CLI
   const openclawCliCandidates = [
     path.join(ROOT, "node_modules", "openclaw", "openclaw.mjs"),
     path.join(ROOT, ".node24", "lib", "node_modules", "openclaw", "openclaw.mjs"),
@@ -143,13 +164,14 @@ async function main() {
   let openclawCli = openclawCliCandidates.find(p => fs.existsSync(p));
 
   if (!openclawCli) {
-    console.log("[3/4] Installing openclaw@latest via npm...");
+    console.log("[3/4] Installing openclaw@latest...");
     const pkgPath = path.join(ROOT, "package.json");
     if (!fs.existsSync(pkgPath)) {
       fs.writeFileSync(pkgPath, JSON.stringify({ name: "openclaw-container", version: "1.0.0", private: true }, null, 2));
     }
     const installEnv = Object.assign({}, process.env, {
-      PATH: path.join(ROOT, ".node24", "bin") + ":" + process.env.PATH
+      PATH: path.join(ROOT, ".node24", "bin") + ":" + process.env.PATH,
+      npm_config_engine_strict: "false"
     });
     spawnSync(npmExec, ["install", "openclaw@latest", "--no-audit", "--no-fund", "--omit=dev"], {
       stdio: "inherit",
@@ -160,10 +182,10 @@ async function main() {
 
   console.log("[3/4] OpenClaw entrypoint: " + openclawCli);
 
-  // 4. Sideload Lightpanda CDP Browser
+  // 4. Lightweight Lightpanda CDP Browser
   const lpBin = path.join(ROOT, ".bin", "lightpanda");
   if (!fs.existsSync(lpBin)) {
-    console.log("Downloading Lightpanda headless browser (~35MB RAM footprint)...");
+    console.log("Downloading Lightpanda (~35MB RAM footprint)...");
     const lpArch = process.arch === "arm64" ? "aarch64" : "x86_64";
     const lpUrl = "https://github.com/lightpanda-io/browser/releases/download/0.4.1/lightpanda-" + lpArch + "-linux";
     try {
@@ -175,7 +197,7 @@ async function main() {
   }
 
   if (fs.existsSync(lpBin)) {
-    console.log("Starting Lightpanda CDP service on 127.0.0.1:9222...");
+    console.log("Starting Lightpanda CDP on 127.0.0.1:9222...");
     try {
       const lpProcess = spawn(lpBin, ["--host", "127.0.0.1", "--port", "9222"], {
         stdio: "ignore",
@@ -187,11 +209,10 @@ async function main() {
     }
   }
 
-  // 5. Environment & V8 memory optimization for 512MB-1GB containers
+  // 5. Optimized V8 & UV Threadpool Flags (no excessive GC thrashing)
   const v8Args = [
-    "--max-old-space-size=384",
-    "--max-semi-space-size=8",
-    "--optimize-for-size"
+    "--max-old-space-size=512",
+    "--max-semi-space-size=16"
   ];
 
   const gatewayEnv = Object.assign({}, process.env, {
@@ -199,55 +220,12 @@ async function main() {
     OPENCLAW_HOME: homeDir,
     OPENCLAW_STATE_DIR: STATE_DIR,
     OPENCLAW_CONFIG_PATH: CONFIG_PATH,
-    UV_THREADPOOL_SIZE: "2",
+    UV_THREADPOOL_SIZE: "4",
     NODE_ENV: "production",
     PATH: path.join(ROOT, ".node24", "bin") + ":" + path.join(ROOT, ".bin") + ":" + (process.env.PATH || "")
   });
 
-  if (!openclawCli) {
-    console.error("CRITICAL: openclaw.mjs entrypoint could not be located.");
-    process.exit(1);
-  }
-
-  // 6. Safe Background Auto-Approver (starts after 10s delay to let gateway boot)
-  setTimeout(() => {
-    setInterval(() => {
-      try {
-        const listProc = spawnSync(nodeExec, [
-          openclawCli, "devices", "list", "--json",
-          "--url", "http://127.0.0.1:" + PORT,
-          "--token", TOKEN
-        ], {
-          env: gatewayEnv,
-          encoding: "utf8",
-          timeout: 3000
-        });
-        if (listProc.stdout) {
-          try {
-            const data = JSON.parse(listProc.stdout);
-            const pending = data.pending || [];
-            for (const req of pending) {
-              const reqId = req.requestId || req.id;
-              if (reqId) {
-                console.log("[Auto-Approve] Auto-approving device pairing request: " + reqId);
-                spawnSync(nodeExec, [
-                  openclawCli, "devices", "approve", reqId,
-                  "--url", "http://127.0.0.1:" + PORT,
-                  "--token", TOKEN
-                ], {
-                  env: gatewayEnv,
-                  encoding: "utf8",
-                  timeout: 3000
-                });
-              }
-            }
-          } catch (e) {}
-        }
-      } catch (e) {}
-    }, 4000);
-  }, 10000);
-
-  // 7. Launch Gateway
+  // 6. Launch Gateway
   console.log("[4/4] Starting OpenClaw Gateway on port " + PORT + "...");
   const gatewayArgs = v8Args.concat([
     openclawCli,
@@ -263,11 +241,11 @@ async function main() {
   });
 
   gatewayProcess.on("error", (err) => {
-    console.error("OpenClaw gateway process error:", err);
+    console.error("Gateway process error:", err);
   });
 
   gatewayProcess.on("exit", (code, signal) => {
-    console.log("OpenClaw gateway stopped with code " + code + " signal " + signal);
+    console.log("Gateway stopped with code " + code + " signal " + signal);
     process.exit(code || 0);
   });
 }
