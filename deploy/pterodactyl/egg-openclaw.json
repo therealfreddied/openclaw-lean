@@ -1,0 +1,63 @@
+{
+  "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+  "meta": {
+    "version": "PTDL_v2",
+    "update_url": null
+  },
+  "exported_at": "2026-09-30T05:15:00+00:00",
+  "name": "OpenClaw Lean Container",
+  "author": "therealfreddied",
+  "description": "Hyper-optimized OpenClaw deployment for constrained (512MB-1GB RAM) environments like PebbleHost and Pterodactyl. Uses Node 24 LTS, Lightpanda CDP browser, and aggressive V8 memory compaction.",
+  "features": null,
+  "docker_images": {
+    "NodeJS 20 / Generic Debian": "ghcr.io/parkervcp/yolks:nodejs_20",
+    "Generic Alpine": "ghcr.io/parkervcp/yolks:debian"
+  },
+  "file_denylist": [],
+  "startup": "if [ -f ./deploy/pterodactyl/pebble_start.js ]; then node ./deploy/pterodactyl/pebble_start.js; else node pebble_start.js; fi",
+  "config": {
+    "files": "{}",
+    "startup": "{\r\n    \"done\": \"OPENCLAW RUNTIME ACTIVE\"\r\n}",
+    "logs": "{}",
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/bash\r\necho \"Installing OpenClaw Lean deployment...\"\r\ncd /mnt/server\r\ncurl -fsSL https://raw.githubusercontent.com/therealfreddied/openclaw-lean/main/deploy/pterodactyl/pebble_start.js -o pebble_start.js\r\nchmod +x pebble_start.js\r\necho \"Installation complete.\"",
+      "container": "ghcr.io/parkervcp/installers:debian",
+      "entrypoint": "bash"
+    }
+  },
+  "variables": [
+    {
+      "name": "Access Mode",
+      "description": "Network ingress strategy: public (direct IP/Port + origin fallback), quicktunnel (free Cloudflare HTTPS), or tunnel (Named Cloudflare Tunnel).",
+      "env_variable": "ACCESS_MODE",
+      "default_value": "public",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|in:public,quicktunnel,tunnel",
+      "field_type": "text"
+    },
+    {
+      "name": "Gateway Auth Token",
+      "description": "Authentication token for OpenClaw Gateway Control UI access.",
+      "env_variable": "OPENCLAW_GATEWAY_TOKEN",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:64",
+      "field_type": "text"
+    },
+    {
+      "name": "Cloudflare Tunnel Token",
+      "description": "Token for Cloudflare Named Tunnel (required if ACCESS_MODE is set to tunnel).",
+      "env_variable": "CLOUDFLARE_TUNNEL_TOKEN",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    }
+  ]
+}
