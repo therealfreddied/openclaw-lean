@@ -1,7 +1,7 @@
 /**
  * Standalone Ultra-Lean OpenClaw Runner for Constrained/Container Hosts
- * Strips out heavy background polling, disables unused heavyweight plugins,
- * and tunes V8 GC & thread pools for butter-smooth responsiveness on 512MB-1GB RAM.
+ * Auto-patches upstream OpenClaw dist to allow non-HTTPS direct IP access,
+ * eliminates heavy plugins, tunes V8 GC & thread pools for lightning-fast responsiveness.
  */
 
 process.on("uncaughtException", (err) => {
@@ -25,7 +25,7 @@ const STATE_DIR = path.join(ROOT, ".openclaw");
 const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
 
 console.log("==================================================");
-console.log("   OPENCLAW ULTRA-LEAN RUNNER (TURBO v4)         ");
+console.log("   OPENCLAW ULTRA-LEAN RUNNER (TURBO v5)         ");
 console.log("==================================================");
 console.log("Host Node    :", process.version);
 console.log("Target Port  :", PORT);
@@ -60,12 +60,45 @@ function download(url, dest) {
   });
 }
 
+function patchOpenClawDist(openclawPkgDir) {
+  const distDir = path.join(openclawPkgDir, "dist");
+  if (!fs.existsSync(distDir)) return;
+
+  try {
+    const files = fs.readdirSync(distDir);
+    for (const f of files) {
+      if (f.endsWith(".mjs") || f.endsWith(".js")) {
+        const fullPath = path.join(distDir, f);
+        let content = fs.readFileSync(fullPath, "utf8");
+        let changed = false;
+
+        // Patch 1: Allow Control UI over direct IP (HTTP) without WebCrypto device identity rejection
+        if (content.includes("evaluateMissingDeviceIdentity(params)")) {
+          const oldTarget = 'if (params.isControlUi) return { kind: "reject-control-ui-insecure-auth" };';
+          const newTarget = 'if (params.isControlUi) return { kind: "allow" };';
+          if (content.includes(oldTarget)) {
+            content = content.replace(oldTarget, newTarget);
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          fs.writeFileSync(fullPath, content, "utf8");
+          console.log("[Patch] Applied direct HTTP bypass to " + f);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[Patch] Warning during dist patch:", e.message);
+  }
+}
+
 async function main() {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(path.join(ROOT, ".bin"), { recursive: true });
   fs.mkdirSync(path.join(ROOT, ".node24"), { recursive: true });
 
-  // 1. Write stripped-down, ultra-performant openclaw.json
+  // 1. Write lean configuration
   const config = {
     gateway: {
       mode: "local",
@@ -86,7 +119,8 @@ async function main() {
           "http://localhost:" + PORT,
           "http://127.0.0.1:" + PORT
         ],
-        dangerouslyAllowHostHeaderOriginFallback: true
+        dangerouslyAllowHostHeaderOriginFallback: true,
+        dangerouslyDisableDeviceAuth: true
       }
     },
     // Deny heavy unneeded plugins that eat RAM & spawn heavy child watchers
@@ -102,7 +136,6 @@ async function main() {
         "beam"
       ]
     },
-    // Disable noisy telemetry & background diagnostic bloat
     telemetry: {
       enabled: false
     },
@@ -120,7 +153,7 @@ async function main() {
   const homeConfigDir = path.join(homeDir, ".openclaw");
   fs.mkdirSync(homeConfigDir, { recursive: true });
   fs.writeFileSync(path.join(homeConfigDir, "openclaw.json"), JSON.stringify(config, null, 2));
-  console.log("[1/4] Lean configuration applied (heavy background plugins disabled).");
+  console.log("[1/4] Lean configuration applied.");
 
   // 2. Node Version Check & Sideload
   const node24Bin = path.join(ROOT, ".node24", "bin", "node");
@@ -155,7 +188,7 @@ async function main() {
   const npmExec = fs.existsSync(npm24Bin) ? npm24Bin : "npm";
   console.log("[2/4] Runtime Executable: " + nodeExec);
 
-  // 3. Check OpenClaw CLI
+  // 3. Check OpenClaw CLI & Patch
   const openclawCliCandidates = [
     path.join(ROOT, "node_modules", "openclaw", "openclaw.mjs"),
     path.join(ROOT, ".node24", "lib", "node_modules", "openclaw", "openclaw.mjs"),
@@ -178,6 +211,17 @@ async function main() {
       env: installEnv
     });
     openclawCli = openclawCliCandidates.find(p => fs.existsSync(p));
+  }
+
+  // Patch all candidate openclaw directories
+  const candidateDirs = [
+    path.join(ROOT, "node_modules", "openclaw"),
+    path.join(ROOT, ".node24", "lib", "node_modules", "openclaw")
+  ];
+  for (const cDir of candidateDirs) {
+    if (fs.existsSync(cDir)) {
+      patchOpenClawDist(cDir);
+    }
   }
 
   console.log("[3/4] OpenClaw entrypoint: " + openclawCli);
@@ -209,7 +253,7 @@ async function main() {
     }
   }
 
-  // 5. Optimized V8 & UV Threadpool Flags (no excessive GC thrashing)
+  // 5. Optimized V8 & UV Threadpool Flags
   const v8Args = [
     "--max-old-space-size=512",
     "--max-semi-space-size=16"
