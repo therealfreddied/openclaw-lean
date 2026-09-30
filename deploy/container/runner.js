@@ -221,7 +221,18 @@ async function boot() {
     }
   };
 
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  
+  // Ensure config is written to all candidate locations
+  const locations = [
+    path.join(ROOT, ".openclaw", "openclaw.json"),
+    path.join(STATE_DIR, "openclaw.json"),
+    path.join(require("os").homedir(), ".openclaw", "openclaw.json")
+  ];
+  for (const loc of locations) {
+    fs.mkdirSync(path.dirname(loc), { recursive: true });
+    fs.writeFileSync(loc, JSON.stringify(config, null, 2));
+  }
+
 
   // Console Connection Banner
   const directUrl = (publicIp ? `http://${publicIp}:${PORT}` : `http://localhost:${PORT}`) + `/#token=${TOKEN}`;
