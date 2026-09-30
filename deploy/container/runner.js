@@ -196,10 +196,14 @@ async function main() {
     process.exit(1);
   }
 
-  // 6. Background Auto-Approver: automatically approves any browser / device pair request
+    // 6. Background Auto-Approver: automatically approves any browser / device pair request
   setInterval(() => {
     try {
-      const listProc = spawnSync(nodeExec, [openclawCli, "devices", "list", "--json", "--url", "http://127.0.0.1:" + PORT], {
+      const listProc = spawnSync(nodeExec, [
+        openclawCli, "devices", "list", "--json",
+        "--url", "http://127.0.0.1:" + PORT,
+        "--token", TOKEN
+      ], {
         env: gatewayEnv,
         encoding: "utf8"
       });
@@ -210,11 +214,16 @@ async function main() {
           for (const req of pending) {
             const reqId = req.requestId || req.id;
             if (reqId) {
-              console.log("[Auto-Approve] Approving pending request: " + reqId);
-              spawnSync(nodeExec, [openclawCli, "devices", "approve", reqId, "--url", "http://127.0.0.1:" + PORT], {
+              console.log("[Auto-Approve] ⚡ Auto-approving pending device/browser pairing: " + reqId);
+              const appProc = spawnSync(nodeExec, [
+                openclawCli, "devices", "approve", reqId,
+                "--url", "http://127.0.0.1:" + PORT,
+                "--token", TOKEN
+              ], {
                 env: gatewayEnv,
-                stdio: "inherit"
+                encoding: "utf8"
               });
+              console.log("[Auto-Approve] Result:", appProc.stdout || appProc.stderr);
             }
           }
         } catch (e) {}
