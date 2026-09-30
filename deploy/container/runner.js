@@ -5,6 +5,7 @@
  * - Sideloads Lightpanda CDP browser
  * - Disables auth or uses clean token, binds 0.0.0.0 (lan)
  * - Sets mode=local and wildcard origin allowlist
+ * - Background Auto-Approver for any incoming device/browser pairing requests
  * - Validated against strict OpenClaw 2026.9.7 schema
  */
 
@@ -16,8 +17,8 @@ const { spawnSync, spawn } = require("child_process");
 
 const ROOT = process.cwd();
 const PORT = process.env.SERVER_PORT || process.env.PORT || "25613";
-const DEFAULT_TOKEN = "pebble-7b46e5621dcf5f5e1289cd3a5cf7c444";
-const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ? process.env.OPENCLAW_GATEWAY_TOKEN : DEFAULT_TOKEN;
+const DEFAULT_TOKEN = "***";
+const TOKEN = *** ? process.env.OPENCLAW_GATEWAY_TOKEN : ***
 const STATE_DIR = path.join(ROOT, ".openclaw");
 const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
 
@@ -70,7 +71,7 @@ async function main() {
       port: Number(PORT),
       auth: {
         mode: "token",
-        token: TOKEN
+        token: ***
       },
       controlUi: {
         enabled: true,
@@ -179,8 +180,7 @@ async function main() {
     lpProcess.unref();
   }
 
-  // 5. Launch Gateway with V8 memory optimization and --allow-unconfigured fallback
-  console.log(`[4/4] 🚀 Starting OpenClaw Gateway on port ${PORT}...`);
+  // 5. Environment & V8 memory optimization
   const v8Args = [
     "--max-old-space-size=384",
     "--max-semi-space-size=8",
@@ -204,21 +204,10 @@ async function main() {
     process.exit(1);
   }
 
-  const gatewayArgs = [
-    ...v8Args,
-    openclawCli,
-    "gateway",
-    "--allow-unconfigured",
-    "--port",
-    String(PORT)
-  ];
-
-  
-  // 6. Auto-approve device pairing requests in background
-  setInterval(async () => {
+  // 6. Continuous Auto-Approval Background Loop for any pending Browser / Device Pairings
+  setInterval(() => {
     try {
-      if (!openclawCli) return;
-      const listProc = spawnSync(nodeExec, [openclawCli, "devices", "list", "--json"], {
+      const listProc = spawnSync(nodeExec, [openclawCli, "devices", "list", "--json", "--url", `http://127.0.0.1:${PORT}`], {
         env: gatewayEnv,
         encoding: "utf8"
       });
@@ -227,16 +216,30 @@ async function main() {
           const data = JSON.parse(listProc.stdout);
           const pending = data.pending || [];
           for (const req of pending) {
-            console.log(`[Auto-Approve] Approving pending device ${req.requestId} (${req.client?.label || "browser"})...`);
-            spawnSync(nodeExec, [openclawCli, "devices", "approve", req.requestId], {
-              env: gatewayEnv,
-              stdio: "inherit"
-            });
+            const reqId = req.requestId || req.id;
+            if (reqId) {
+              console.log(`[Auto-Pair] ⚡ Auto-approving pending device/browser ${reqId} (${req.client?.label || req.ip || "browser"})...`);
+              spawnSync(nodeExec, [openclawCli, "devices", "approve", reqId, "--url", `http://127.0.0.1:${PORT}`], {
+                env: gatewayEnv,
+                stdio: "inherit"
+              });
+            }
           }
         } catch (e) {}
       }
-    } catch (err) {}
-  }, 3000);
+    } catch (e) {}
+  }, 2500);
+
+  // 7. Launch Gateway
+  console.log(`[4/4] 🚀 Starting OpenClaw Gateway on port ${PORT}...`);
+  const gatewayArgs = [
+    ...v8Args,
+    openclawCli,
+    "gateway",
+    "--allow-unconfigured",
+    "--port",
+    String(PORT)
+  ];
 
   const gatewayProcess = spawn(nodeExec, gatewayArgs, {
     env: gatewayEnv,
