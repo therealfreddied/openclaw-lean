@@ -57,9 +57,10 @@ async function main() {
   fs.mkdirSync(path.join(ROOT, ".bin"), { recursive: true });
   fs.mkdirSync(path.join(ROOT, ".node24"), { recursive: true });
 
-  // 1. Write deterministic openclaw.json
+  // 1. Write deterministic openclaw.json with mode="local" and wildcard allowedOrigins
   const config = {
     gateway: {
+      mode: "local",
       bind: "lan",
       port: Number(PORT),
       auth: {
@@ -89,9 +90,9 @@ async function main() {
   const homeConfigDir = path.join(homeDir, ".openclaw");
   fs.mkdirSync(homeConfigDir, { recursive: true });
   fs.writeFileSync(path.join(homeConfigDir, "openclaw.json"), JSON.stringify(config, null, 2));
-  console.log("[1/4] Config written with wildcard origin support.");
+  console.log("[1/4] Config written (mode=local + origin allowlists).");
 
-  // 2. Sideload Node 24.21.0 LTS
+  // 2. Sideload Node 24.21.0 LTS if needed
   const node24Bin = path.join(ROOT, ".node24", "bin", "node");
   const npm24Bin = path.join(ROOT, ".node24", "bin", "npm");
   let nodeExec = process.execPath;
@@ -171,7 +172,7 @@ async function main() {
     lpProcess.unref();
   }
 
-  // 5. Launch Gateway
+  // 5. Launch Gateway with V8 memory optimization and --allow-unconfigured fallback
   console.log(`[4/4] 🚀 Starting OpenClaw Gateway on port ${PORT}...`);
   const v8Args = [
     "--max-old-space-size=384",
@@ -196,7 +197,16 @@ async function main() {
     process.exit(1);
   }
 
-  const gatewayProcess = spawn(nodeExec, [...v8Args, openclawCli, "gateway", "--port", String(PORT)], {
+  const gatewayArgs = [
+    ...v8Args,
+    openclawCli,
+    "gateway",
+    "--allow-unconfigured",
+    "--port",
+    String(PORT)
+  ];
+
+  const gatewayProcess = spawn(nodeExec, gatewayArgs, {
     env: gatewayEnv,
     stdio: "inherit"
   });
