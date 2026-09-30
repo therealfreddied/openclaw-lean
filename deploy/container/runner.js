@@ -109,8 +109,9 @@ async function main() {
   let npmExec = "npm";
 
   const majorVersion = parseInt(process.versions.node.split(".")[0], 10);
-  if (majorVersion < 22 && !fs.existsSync(node24Bin)) {
-    console.log("[2/4] Host Node is v" + process.version + " (< 22). Sideloading Node 24.21.0 LTS...");
+  const isNodeSufficient = (v) => { try { const p = v.replace(/^v/, "").split(".").map(Number); return p[0] > 24 || (p[0] === 24 && p[1] >= 16); } catch (e) { return false; } };
+  if (!isNodeSufficient(process.version) && !fs.existsSync(node24Bin)) {
+    console.log("[2/4] Host Node is v" + process.version + " (< 24.16.0). Sideloading Node 24.21.0 LTS...");
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const nodeTar = path.join(ROOT, "node-v24.21.0-linux-" + arch + ".tar.gz");
     const nodeUrl = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-" + arch + ".tar.gz";
