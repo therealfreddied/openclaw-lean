@@ -1,6 +1,10 @@
 /**
- * Standalone Complete OpenClaw Lean Runner for PebbleHost / Pterodactyl
- * Self-contained: Pure Node.js streams (no external curl/xz dependencies)
+ * Standalone Complete OpenClaw Lean Runner for PebbleHost / Pterodactyl / SkailarHost
+ * - Automatically detects assigned allocation port or fallback
+ * - Sideloads Node 24.21.0 LTS without xz dependency
+ * - Sideloads Lightpanda CDP browser
+ * - Disables auth or uses clean token, binds 0.0.0.0 (lan)
+ * - Sets mode=local and wildcard origin allowlist
  */
 
 const fs = require("fs");
@@ -17,7 +21,7 @@ const STATE_DIR = path.join(ROOT, ".openclaw");
 const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
 
 console.log("==================================================");
-console.log("   OPENCLAW ALL-IN-ONE RUNNER (PEBBLEHOST)");
+console.log("   OPENCLAW ALL-IN-ONE RUNNER (CONTAINER)");
 console.log("==================================================");
 console.log("Target Port :", PORT);
 console.log("State Dir   :", STATE_DIR);
@@ -73,6 +77,8 @@ async function main() {
           "*",
           `http://54.39.90.209:${PORT}`,
           `https://54.39.90.209:${PORT}`,
+          `http://209.222.98.205:${PORT}`,
+          `https://209.222.98.205:${PORT}`,
           `http://localhost:${PORT}`,
           `http://127.0.0.1:${PORT}`
         ],
@@ -134,7 +140,7 @@ async function main() {
     console.log("[3/4] Installing openclaw@latest via npm...");
     const pkgPath = path.join(ROOT, "package.json");
     if (!fs.existsSync(pkgPath)) {
-      fs.writeFileSync(pkgPath, JSON.stringify({ name: "openclaw-pebble", version: "1.0.0", private: true }, null, 2));
+      fs.writeFileSync(pkgPath, JSON.stringify({ name: "openclaw-container", version: "1.0.0", private: true }, null, 2));
     }
     const installEnv = {
       ...process.env,
