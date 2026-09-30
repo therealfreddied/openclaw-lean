@@ -1,300 +1,218 @@
 /**
- * Standalone Ultra-Lean OpenClaw Runner for Constrained/Container Hosts
- * Auto-patches upstream OpenClaw dist to allow non-HTTPS direct IP access,
- * eliminates heavy plugins, tunes V8 GC & thread pools for lightning-fast responsiveness.
+ * openclaw-lean - Production Low-RAM Pterodactyl & Container Launcher
+ * Compatible with Node >= 22 Host, automatically bootstraps Node 24.x LTS & OpenClaw
  */
 
-process.on("uncaughtException", (err) => {
-  console.error("[Runner UncaughtException]", err.stack || err);
-});
-process.on("unhandledRejection", (reason) => {
-  console.error("[Runner UnhandledRejection]", reason);
-});
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+const https = require('https');
+const child_process = require('child_process');
 
-const fs = require("fs");
-const path = require("path");
-const https = require("https");
-const http = require("http");
-const { spawnSync, spawn } = require("child_process");
+const HOME = process.env.HOME || '/home/container';
+const NODE24_DIR = path.join(HOME, '.node24');
+const NODE24_BIN = path.join(NODE24_DIR, 'bin', 'node');
+const OPENCLAW_DIR = path.join(HOME, '.openclaw');
+const CONFIG_PATH = path.join(OPENCLAW_DIR, 'openclaw.json');
 
-const ROOT = process.cwd();
-const PORT = process.env.SERVER_PORT || process.env.PORT || "25613";
-const DEFAULT_TOKEN = Buffer.from("cGViYmxlLTdiNDZlNTYyMWRjZjVmNWUxMjg5Y2QzYTVjZjdjNDQ0", "base64").toString("utf8");
-const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || DEFAULT_TOKEN;
-const STATE_DIR = path.join(ROOT, ".openclaw");
-const CONFIG_PATH = path.join(STATE_DIR, "openclaw.json");
+// Memory & Engine Limits
+process.env.UV_THREADPOOL_SIZE = '4';
+process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS || ''} --max-old-space-size=384 --expose-gc`;
 
-console.log("==================================================");
-console.log("   OPENCLAW ULTRA-LEAN RUNNER (TURBO v5)         ");
-console.log("==================================================");
-console.log("Host Node    :", process.version);
-console.log("Target Port  :", PORT);
-console.log("Root Path    :", ROOT);
-console.log("==================================================");
+function log(msg) {
+  console.log(`[openclaw-runner] ${new Date().toISOString().slice(11, 19)} ${msg}`);
+}
 
-function download(url, dest) {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    const get = (targetUrl) => {
-      const client = targetUrl.startsWith("https") ? https : http;
-      client.get(targetUrl, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return get(res.headers.location);
-        }
-        if (res.statusCode !== 200) {
-          file.close();
-          try { fs.unlinkSync(dest); } catch (e) {}
-          return reject(new Error("HTTP " + res.statusCode + " for " + targetUrl));
-        }
-        res.pipe(file);
-        file.on("finish", () => {
-          file.close(() => resolve());
-        });
-      }).on("error", (err) => {
-        file.close();
-        try { fs.unlinkSync(dest); } catch (e) {}
-        reject(err);
-      });
-    };
-    get(url);
+function ensureDirectories() {
+  [OPENCLAW_DIR, NODE24_DIR, path.join(HOME, '.bin')].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   });
 }
 
-function patchOpenClawDist(openclawPkgDir) {
-  const distDir = path.join(openclawPkgDir, "dist");
-  if (!fs.existsSync(distDir)) return;
-
-  try {
-    const files = fs.readdirSync(distDir);
-    for (const f of files) {
-      if (f.endsWith(".mjs") || f.endsWith(".js")) {
-        const fullPath = path.join(distDir, f);
-        let content = fs.readFileSync(fullPath, "utf8");
-        let changed = false;
-
-        // Patch 1: Allow Control UI over direct IP (HTTP) without WebCrypto device identity rejection
-        if (content.includes("evaluateMissingDeviceIdentity(params)")) {
-          const oldTarget = 'if (params.isControlUi) return { kind: "reject-control-ui-insecure-auth" };';
-          const newTarget = 'if (params.isControlUi) return { kind: "allow" };';
-          if (content.includes(oldTarget)) {
-            content = content.replace(oldTarget, newTarget);
-            changed = true;
-          }
-        }
-
-        if (changed) {
-          fs.writeFileSync(fullPath, content, "utf8");
-          console.log("[Patch] Applied direct HTTP bypass to " + f);
-        }
+function ensureConfig() {
+  const port = parseInt(process.env.SERVER_PORT || '50049', 10);
+  const token = process.env.OPENCLAW_TOKEN || 'pebble-7b46e5621dcf5f5e1289cd3a5cf7c444';
+  
+  const baseConfig = {
+    meta: {
+      migrations: {
+        modelPolicyAllowlist: true
       }
-    }
-  } catch (e) {
-    console.warn("[Patch] Warning during dist patch:", e.message);
-  }
-}
-
-async function main() {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.mkdirSync(path.join(ROOT, ".bin"), { recursive: true });
-  fs.mkdirSync(path.join(ROOT, ".node24"), { recursive: true });
-
-  // 1. Write lean configuration
-  const config = {
+    },
     gateway: {
-      mode: "local",
-      bind: "lan",
-      port: Number(PORT),
+      mode: 'local',
+      bind: 'lan',
+      port: port,
       auth: {
-        mode: "token",
-        token: TOKEN
+        mode: 'token',
+        token: token
       },
       controlUi: {
         enabled: true,
-        allowedOrigins: [
-          "*",
-          "http://54.39.90.209:" + PORT,
-          "https://54.39.90.209:" + PORT,
-          "http://209.222.98.205:" + PORT,
-          "https://209.222.98.205:" + PORT,
-          "http://localhost:" + PORT,
-          "http://127.0.0.1:" + PORT
-        ],
+        allowedOrigins: ['*'],
         dangerouslyAllowHostHeaderOriginFallback: true,
         dangerouslyDisableDeviceAuth: true
       }
     },
-    // Deny heavy unneeded plugins that eat RAM & spawn heavy child watchers
     plugins: {
       deny: [
-        "cua-computer",
-        "linux-node",
-        "talk-voice",
-        "azure-speech",
-        "apple-fm",
-        "ollama",
-        "geolocation",
-        "beam"
+        'cua-computer',
+        'linux-node',
+        'talk-voice',
+        'azure-speech',
+        'apple-fm',
+        'ollama',
+        'geolocation',
+        'beam',
+        'device-pair',
+        'canvas',
+        'file-transfer'
       ]
     },
-    telemetry: {
+    browser: {
       enabled: false
     },
     diagnostics: {
       enabled: false
     },
-    browser: {
-      enabled: true,
-      cdpUrl: "http://127.0.0.1:9222"
+    telemetry: {
+      enabled: false
     }
   };
 
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-  const homeDir = process.env.HOME || "/home/container";
-  const homeConfigDir = path.join(homeDir, ".openclaw");
-  fs.mkdirSync(homeConfigDir, { recursive: true });
-  fs.writeFileSync(path.join(homeConfigDir, "openclaw.json"), JSON.stringify(config, null, 2));
-  console.log("[1/4] Lean configuration applied.");
-
-  // 2. Node Version Check & Sideload
-  const node24Bin = path.join(ROOT, ".node24", "bin", "node");
-  const npm24Bin = path.join(ROOT, ".node24", "bin", "npm");
-
-  const isNodeSufficient = (v) => {
+  if (!fs.existsSync(CONFIG_PATH)) {
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(baseConfig, null, 2), 'utf8');
+    log(`Generated new config at ${CONFIG_PATH} (port ${port})`);
+  } else {
     try {
-      const p = v.replace(/^v/, "").split(".").map(Number);
-      return p[0] > 24 || (p[0] === 24 && p[1] >= 16);
+      const cur = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      let modified = false;
+      if (!cur.gateway) { cur.gateway = baseConfig.gateway; modified = true; }
+      if (cur.gateway.mode !== 'local') { cur.gateway.mode = 'local'; modified = true; }
+      if (cur.gateway.bind !== 'lan') { cur.gateway.bind = 'lan'; modified = true; }
+      if (cur.gateway.port !== port) { cur.gateway.port = port; modified = true; }
+      if (!cur.gateway.controlUi) { cur.gateway.controlUi = baseConfig.gateway.controlUi; modified = true; }
+      if (cur.gateway.controlUi.dangerouslyDisableDeviceAuth !== true) {
+        cur.gateway.controlUi.dangerouslyDisableDeviceAuth = true;
+        modified = true;
+      }
+      if (cur.browser && cur.browser.provider) {
+        delete cur.browser.provider;
+        cur.browser.enabled = false;
+        modified = true;
+      }
+      if (modified) {
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(cur, null, 2), 'utf8');
+        log('Updated existing config with compatibility fixes.');
+      }
     } catch (e) {
-      return false;
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(baseConfig, null, 2), 'utf8');
     }
-  };
+  }
+}
 
-  if (!isNodeSufficient(process.version) && !fs.existsSync(node24Bin)) {
-    console.log("[2/4] Sideloading Node 24.21.0 LTS Linux x64...");
-    const arch = process.arch === "arm64" ? "arm64" : "x64";
-    const nodeTar = path.join(ROOT, "node-v24.21.0-linux-" + arch + ".tar.gz");
-    const nodeUrl = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-" + arch + ".tar.gz";
+function patchOpenClawDist(distPath) {
+  if (!fs.existsSync(distPath)) return;
+  try {
+    const files = fs.readdirSync(distPath);
+    for (const f of files) {
+      if (f.endsWith('.mjs') || f.endsWith('.js')) {
+        const full = path.join(distPath, f);
+        let code = fs.readFileSync(full, 'utf8');
+        let altered = false;
+        
+        // Patch WebCrypto device pairing requirement on non-HTTPS origins
+        if (code.includes('CONTROL_UI_DEVICE_IDENTITY_REQUIRED')) {
+          code = code.replace(/CONTROL_UI_DEVICE_IDENTITY_REQUIRED/g, 'ALLOW_DIRECT_IP_AUTH');
+          altered = true;
+        }
+        if (altered) {
+          fs.writeFileSync(full, code, 'utf8');
+          log(`Patched runtime file: ${f}`);
+        }
+      }
+    }
+  } catch (e) {
+    log(`Dist patch error: ${e.message}`);
+  }
+}
 
+function installNode24() {
+  log('Checking Node 24 runtime...');
+  if (fs.existsSync(NODE24_BIN)) {
+    log('Node 24 binary present.');
+    return true;
+  }
+
+  log('Downloading Node v24.21.0 tarball...');
+  const tarballUrl = 'https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.gz';
+  const destTar = path.join(HOME, 'node24.tar.gz');
+
+  child_process.execSync(`curl -fsSL "${tarballUrl}" -o "${destTar}" || wget -qO "${destTar}" "${tarballUrl}"`, { stdio: 'inherit' });
+  log('Extracting Node 24...');
+  child_process.execSync(`tar -xzf "${destTar}" -C "${NODE24_DIR}" --strip-components=1`, { stdio: 'inherit' });
+  if (fs.existsSync(destTar)) fs.unlinkSync(destTar);
+  log('Node 24 extracted successfully.');
+  return true;
+}
+
+function launchGateway() {
+  ensureDirectories();
+  ensureConfig();
+
+  // Find node executable
+  let nodeBin = 'node';
+  if (fs.existsSync(NODE24_BIN)) {
+    nodeBin = NODE24_BIN;
+  } else {
     try {
-      await download(nodeUrl, nodeTar);
-      console.log("Extracting Node 24.21.0 LTS...");
-      spawnSync("tar", ["-zxf", nodeTar, "--strip-components=1", "-C", path.join(ROOT, ".node24")], { stdio: "inherit" });
-      try { fs.unlinkSync(nodeTar); } catch (e) {}
+      installNode24();
+      if (fs.existsSync(NODE24_BIN)) nodeBin = NODE24_BIN;
     } catch (e) {
-      console.error("Node 24 download/extract failed:", e.message);
+      log(`Node 24 bootstrap failed, falling back to system node: ${e.message}`);
     }
   }
 
-  const nodeExec = fs.existsSync(node24Bin) ? node24Bin : process.execPath;
-  const npmExec = fs.existsSync(npm24Bin) ? npm24Bin : "npm";
-  console.log("[2/4] Runtime Executable: " + nodeExec);
+  // Check OpenClaw module
+  let openclawMjs = path.join(HOME, 'node_modules', 'openclaw', 'openclaw.mjs');
+  if (!fs.existsSync(openclawMjs)) {
+    log('Installing openclaw package...');
+    child_process.execSync('npm install openclaw@2026.9.7 --no-audit --no-fund --omit=dev', { cwd: HOME, stdio: 'inherit' });
+  }
 
-  // 3. Check OpenClaw CLI & Patch
-  const openclawCliCandidates = [
-    path.join(ROOT, "node_modules", "openclaw", "openclaw.mjs"),
-    path.join(ROOT, ".node24", "lib", "node_modules", "openclaw", "openclaw.mjs"),
-    path.join(ROOT, "node_modules", ".bin", "openclaw")
+  const distDir = path.join(HOME, 'node_modules', 'openclaw', 'dist');
+  patchOpenClawDist(distDir);
+
+  log(`Launching OpenClaw Gateway with ${nodeBin}...`);
+  const port = process.env.SERVER_PORT || '50049';
+  const token = process.env.OPENCLAW_TOKEN || 'pebble-7b46e5621dcf5f5e1289cd3a5cf7c444';
+
+  console.log('========================================================');
+  console.log(`CONTROL UI URL: http://${process.env.SERVER_IP || 'HOST_IP'}:${port}/#token=${token}`);
+  console.log('========================================================');
+
+  const args = [
+    openclawMjs,
+    'gateway',
+    '--port', port,
+    '--bind', 'lan',
+    '--allow-unconfigured'
   ];
-  let openclawCli = openclawCliCandidates.find(p => fs.existsSync(p));
 
-  if (!openclawCli) {
-    console.log("[3/4] Installing openclaw@latest...");
-    const pkgPath = path.join(ROOT, "package.json");
-    if (!fs.existsSync(pkgPath)) {
-      fs.writeFileSync(pkgPath, JSON.stringify({ name: "openclaw-container", version: "1.0.0", private: true }, null, 2));
-    }
-    const installEnv = Object.assign({}, process.env, {
-      PATH: path.join(ROOT, ".node24", "bin") + ":" + process.env.PATH,
-      npm_config_engine_strict: "false"
-    });
-    spawnSync(npmExec, ["install", "openclaw@latest", "--no-audit", "--no-fund", "--omit=dev"], {
-      stdio: "inherit",
-      env: installEnv
-    });
-    openclawCli = openclawCliCandidates.find(p => fs.existsSync(p));
-  }
-
-  // Patch all candidate openclaw directories
-  const candidateDirs = [
-    path.join(ROOT, "node_modules", "openclaw"),
-    path.join(ROOT, ".node24", "lib", "node_modules", "openclaw")
-  ];
-  for (const cDir of candidateDirs) {
-    if (fs.existsSync(cDir)) {
-      patchOpenClawDist(cDir);
-    }
-  }
-
-  console.log("[3/4] OpenClaw entrypoint: " + openclawCli);
-
-  // 4. Lightweight Lightpanda CDP Browser
-  const lpBin = path.join(ROOT, ".bin", "lightpanda");
-  if (!fs.existsSync(lpBin)) {
-    console.log("Downloading Lightpanda (~35MB RAM footprint)...");
-    const lpArch = process.arch === "arm64" ? "aarch64" : "x86_64";
-    const lpUrl = "https://github.com/lightpanda-io/browser/releases/download/0.4.1/lightpanda-" + lpArch + "-linux";
-    try {
-      await download(lpUrl, lpBin);
-      try { fs.chmodSync(lpBin, 0o755); } catch (e) {}
-    } catch (e) {
-      console.warn("Lightpanda download skipped:", e.message);
-    }
-  }
-
-  if (fs.existsSync(lpBin)) {
-    console.log("Starting Lightpanda CDP on 127.0.0.1:9222...");
-    try {
-      const lpProcess = spawn(lpBin, ["--host", "127.0.0.1", "--port", "9222"], {
-        stdio: "ignore",
-        detached: true
-      });
-      lpProcess.unref();
-    } catch (e) {
-      console.warn("Lightpanda start failed:", e.message);
-    }
-  }
-
-  // 5. Optimized V8 & UV Threadpool Flags
-  const v8Args = [
-    "--max-old-space-size=512",
-    "--max-semi-space-size=16"
-  ];
-
-  const gatewayEnv = Object.assign({}, process.env, {
-    HOME: homeDir,
-    OPENCLAW_HOME: homeDir,
-    OPENCLAW_STATE_DIR: STATE_DIR,
-    OPENCLAW_CONFIG_PATH: CONFIG_PATH,
-    UV_THREADPOOL_SIZE: "4",
-    NODE_ENV: "production",
-    PATH: path.join(ROOT, ".node24", "bin") + ":" + path.join(ROOT, ".bin") + ":" + (process.env.PATH || "")
+  const proc = child_process.spawn(nodeBin, args, {
+    cwd: HOME,
+    env: {
+      ...process.env,
+      PATH: `${path.join(NODE24_DIR, 'bin')}:${process.env.PATH}`,
+      NODE_PATH: path.join(HOME, 'node_modules')
+    },
+    stdio: 'inherit'
   });
 
-  // 6. Launch Gateway
-  console.log("[4/4] Starting OpenClaw Gateway on port " + PORT + "...");
-  const gatewayArgs = v8Args.concat([
-    openclawCli,
-    "gateway",
-    "--allow-unconfigured",
-    "--port",
-    String(PORT)
-  ]);
-
-  const gatewayProcess = spawn(nodeExec, gatewayArgs, {
-    env: gatewayEnv,
-    stdio: "inherit"
-  });
-
-  gatewayProcess.on("error", (err) => {
-    console.error("Gateway process error:", err);
-  });
-
-  gatewayProcess.on("exit", (code, signal) => {
-    console.log("Gateway stopped with code " + code + " signal " + signal);
-    process.exit(code || 0);
+  proc.on('exit', (code, sig) => {
+    log(`Gateway exited with code ${code}, signal ${sig}. Restarting in 5 seconds...`);
+    setTimeout(launchGateway, 5000);
   });
 }
 
-main().catch(err => {
-  console.error("FATAL Runner Error:", err);
-  process.exit(1);
-});
+launchGateway();
